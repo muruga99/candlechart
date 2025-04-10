@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Candlestick Game</title>
+  <style>
+    body { margin: 0; background: #111; overflow: hidden; color: white; font-family: sans-serif; }
+    canvas { display: block; background: #222; }
+    #game-over, #start-button {
+      position: fixed;
+      font-size: 2rem; padding: 10px 20px;
+      background: #333; border: 2px solid white;
+      color: white; cursor: pointer;
+    }
+    #game-over {
+      top: 55%; left: 50%;
+      transform: translate(-50%, -50%);
+      display: none; color: red; white-space: pre-line;
+    }
+    #start-button {
+      top: 40%; left: 50%;
+      transform: translate(-50%, -50%);
+      display: block;
+    }
+    #money-display {
+      position: fixed; top: 10px; left: 10px;
+      font-size: 1.2rem; background: #333;
+      padding: 5px 10px; border: 1px solid white;
+    }
+    #avoided-display {
+      position: fixed; top: 10px; right: 10px;
+      font-size: 1.2rem; background: #333;
+      padding: 5px 10px; border: 1px solid white;
+    }
+    #audio-toggle {
+      position: fixed; top: 10px; left: 50%;
+      transform: translateX(-50%);
+      font-size: 1.5rem;
+      background: none; border: none;
+      color: white; cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas"></canvas>
+  <div id="money-display">💰 Money: $0</div>
+  <div id="avoided-display">✅ Avoided: 0</div>
+  <button id="audio-toggle">🔊</button>
+  <div id="game-over">Game Over</div>
+  <div id="start-button">Start Game</div>
+
+  <audio id="bg-music" loop>
+    <source src="https://cdn.pixabay.com/audio/2022/03/16/audio_a149fdf8b8.mp3" type="audio/mp3">
+    Your browser does not support the audio element.
+  </audio>
+
+  <script>
+    const canvas = document.getElementById("gameCanvas");
+    const ctx = canvas.getContext("2d");
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+
+    const music = document.getElementById("bg-music");
+    const toggleBtn = document.getElementById("audio-toggle");
+    let isMusicOn = true;
+
+    toggleBtn.addEventListener("click", () => {
+      isMusicOn = !isMusicOn;
+      toggleBtn.innerText = isMusicOn ? "🔊" : "🔇";
+      if (isMusicOn) music.play();
+      else music.pause();
+    });
+
+    window.addEventListener("click", () => {
+      if (isMusicOn && music.paused) music.play();
+    });
+
+    // === game logic below ===
+
+    let worldWidth = 5000, worldHeight = 3000;
+    let cameraOffsetX = 0, cameraOffsetY = 0;
+    let candles = [], currentCandle = null;
+    let direction = { up: false, down: false };
+    let newsBubbles = [], blastAnimations = [];
+    let gameStarted = false, gameOver = false;
+    let money = 0, negativeHits = 0;
+    let avoidedBubbles = 0;
+    let lastTouchTime = Date.now();
+
+    function drawCandle(c) {
+      ctx.fillStyle = c.bodyColor;
+      ctx.fillRect(c.x, c.openY, c.width, c.closeY - c.openY);
+      ctx.strokeStyle = "white";
+      ctx.beginPath();
+      ctx.moveTo(c.x + c.width / 2, Math.min(c.openY, c.closeY) - c.wickHeight);
+      ctx.lineTo(c.x + c.width / 2, Math.max(c.openY, c.closeY) + c.wickHeight);
+      ctx.stroke();
+    }
+
+    function updateCandle() {
+      if (!currentCandle) return;
+      if (direction.up) { currentCandle.closeY -= 2; currentCandle.bodyColor = 'green'; }
+      if (direction.down) { currentCandle.closeY += 2; currentCandle.bodyColor = 'red'; }
+    }
+
+    function spawnBubble() {
+      const type = Math.random() < 0.5 ? "fall" : "float-horizontal";
+      const isBonus = Math.random() < 0.1;
+      const effect = isBonus ? "avoid-bonus" : (Math.random() > 0.5 ? "positive" : "negative");
+
+      const textList = {
+        positive: ["Jobs Up", "Profit Boom", "Fed Cut", "Market Rally"],
+        negative: ["Rate Hike", "Crash", "Recession", "War"],
+        "avoid-bonus": ["Bonus Small", "Bonus Avg", "Bonus Big"]
+      };
+
+      let radius = 20 + Math.random() * 10;
+      let bonusValue = 0;
+
+      if (effect === "avoid-bonus") {
+        const rand = Math.random();
+        if (rand < 0.33) { radius = 15; bonusValue = 5; }
+        else if (rand < 0.66) { radius = 25; bonusValue = 20; }
+        else { radius = 35; bonusValue = 50; }
+      }
+
+      let dy = type === "fall" ? 1 + Math.random() * 2 : 0;
+      let dx = type === "float-horizontal" ? (Math.random() < 0.5 ? -0.5 : 0.5) : 0;
+
+      if (Math.random() < 0.15) {
+        radius *= 2; dy *= 5; dx *= 3;
+      }
+
+      newsBubbles.push({
+        x: Math.random() * worldWidth,
+        y: type === "fall" ? 0 : 200 + Math.random() * (worldHeight - 400),
+        radius,
+        text: textList[effect][Math.floor(Math.random() * textList[effect].length)],
+        effect,
+        dy,
+        dx,
+        changeTimer: 200 + Math.random() * 300,
+        type,
+        bonusValue
+      });
+    }
+
+    function updateBubbles() {
+      newsBubbles.forEach(b => {
+        b.x += b.dx;
+        b.y += b.dy;
+        if (b.effect === "avoid-bonus" && Math.random() < 0.01) {
+          b.effect = "sudden-negative";
+          b.text = "TRAP!";
+        }
+        if (b.changeTimer-- <= 0) {
+          if (Math.random() < 0.4 && b.effect !== "avoid-bonus") {
+            b.effect = b.effect === "positive" ? "negative" : "positive";
+          }
+          if (Math.random() < 0.4) {
+            b.radius *= 1.5;
+            if (b.type === "fall") b.dy *= 5;
+          }
+          b.changeTimer = 300 + Math.random() * 300;
+        }
+      });
+
+      newsBubbles = newsBubbles.filter(b => {
+        if (b.y > worldHeight + 100 || b.x < -100 || b.x > worldWidth + 100) {
+          if (b.effect === "positive") avoidedBubbles++;
+          document.getElementById("avoided-display").innerText = `✅ Avoided: ${avoidedBubbles}`;
+          if (avoidedBubbles >= 500) {
+            gameOver = true;
+            showGameOver("Great Discipline", money);
+          }
+          return false;
+        }
+        return true;
+      });
+    }
+
+    function drawBubbles() {
+      newsBubbles.forEach(b => {
+        ctx.beginPath();
+        ctx.fillStyle = b.effect === "positive" ? "green" :
+                        b.effect === "avoid-bonus" ? "blue" :
+                        b.effect === "sudden-negative" ? "red" : "red";
+        ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = "white";
+        ctx.font = "12px sans-serif";
+        ctx.fillText(b.text, b.x - b.radius, b.y - b.radius - 5);
+      });
+    }
+
+    function checkCollision() {
+      newsBubbles.forEach((b, index) => {
+        const cx = currentCandle.x + currentCandle.width / 2;
+        const cy = currentCandle.closeY;
+        const dx = cx - b.x;
+        const dy = cy - b.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < b.radius + currentCandle.width / 2) {
+          blastAnimations.push({ x: b.x, y: b.y, radius: b.radius, alpha: 1 });
+          lastTouchTime = Date.now();
+
+          if (b.effect === "negative" || b.effect === "sudden-negative") {
+            gameOver = true;
+            showGameOver("Big News Hit!", money);
+          } else if (b.effect === "positive") {
+            currentCandle.closeY -= 40;
+            money += 100;
+          } else if (b.effect === "avoid-bonus") {
+            avoidedBubbles = Math.max(0, avoidedBubbles - b.bonusValue);
+            document.getElementById("avoided-display").innerText = `✅ Avoided: ${avoidedBubbles}`;
+          }
+
+          newsBubbles.splice(index, 1);
+          document.getElementById("money-display").innerText = `💰 Money: $${money}`;
+        }
+      });
+    }
+
+    function drawBlastAnimations() {
+      blastAnimations.forEach((blast, index) => {
+        ctx.beginPath();
+        ctx.globalAlpha = blast.alpha;
+        ctx.fillStyle = "yellow";
+        ctx.arc(blast.x, blast.y, blast.radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        blast.radius += 2;
+        blast.alpha -= 0.05;
+        if (blast.alpha <= 0) blastAnimations.splice(index, 1);
+      });
+    }
+
+    function showGameOver(reason, earnings) {
+      const gameOverText = document.getElementById("game-over");
+      gameOverText.innerText = `${reason}!\nGame Over\nEarned: $${earnings}`;
+      gameOverText.style.display = "block";
+      document.getElementById("start-button").innerText = "New Trade";
+      document.getElementById("start-button").style.display = "block";
+    }
+
+    function gameLoop() {
+      if (!gameStarted || gameOver) return;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      if (Date.now() - lastTouchTime > 35000) {
+        gameOver = true;
+        showGameOver("Position Closed", money);
+        return;
+      }
+
+      updateCandle();
+      updateBubbles();
+      checkCollision();
+
+      cameraOffsetX = currentCandle.x - canvas.width / 2;
+      cameraOffsetY = currentCandle.closeY - canvas.height / 2;
+      cameraOffsetX = Math.max(0, Math.min(cameraOffsetX, worldWidth - canvas.width));
+      cameraOffsetY = Math.max(0, Math.min(cameraOffsetY, worldHeight - canvas.height));
+
+      ctx.save();
+      ctx.translate(-cameraOffsetX, -cameraOffsetY);
+
+      candles.forEach(drawCandle);
+      if (currentCandle) drawCandle(currentCandle);
+      drawBubbles();
+      drawBlastAnimations();
+
+      ctx.restore();
+      requestAnimationFrame(gameLoop);
+    }
+
+    function initGame() {
+      currentCandle = {
+        x: 100, width: 10, openY: worldHeight - 100,
+        closeY: worldHeight - 140, wickHeight: 10, bodyColor: 'green'
+      };
+      candles = [];
+      newsBubbles = [];
+      money = 0;
+      avoidedBubbles = 0;
+      negativeHits = 0;
+      lastTouchTime = Date.now();
+      gameOver = false;
+      gameStarted = true;
+      document.getElementById("money-display").innerText = `💰 Money: $${money}`;
+      document.getElementById("avoided-display").innerText = `✅ Avoided: ${avoidedBubbles}`;
+      document.getElementById("start-button").style.display = "none";
+      document.getElementById("game-over").style.display = "none";
+      gameLoop();
+    }
+
+    document.addEventListener("keydown", e => {
+      if (!currentCandle) return;
+      if (e.key === "ArrowUp") direction.up = true;
+      if (e.key === "ArrowDown") direction.down = true;
+      if (e.key === "ArrowRight") {
+        candles.push({ ...currentCandle });
+        const prevClose = currentCandle.closeY;
+        currentCandle = {
+          x: currentCandle.x + 20,
+          width: 10,
+          openY: prevClose,
+          closeY: prevClose,
+          wickHeight: 10,
+          bodyColor: 'green'
+        };
+      }
+    });
+
+    document.addEventListener("keyup", e => {
+      if (e.key === "ArrowUp") direction.up = false;
+      if (e.key === "ArrowDown") direction.down = false;
+    });
+
+    document.getElementById("start-button").addEventListener("click", initGame);
+
+    setInterval(() => {
+      if (gameStarted && !gameOver) {
+        for (let i = 0; i < 3; i++) spawnBubble();
+      }
+    }, 800);
+  </script>
+</body>
+</html>
